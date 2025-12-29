@@ -312,6 +312,7 @@ func (h *Hub) getDeviceList() []map[string]interface{} {
 		windowsUsername := ""
 		wallpaperURL := "https://images.unsplash.com/photo-1614624532983-4ce03382d63d?w=800&q=80"
 		label := ""
+		groupName := ""
 
 		if client.DeviceInfo != nil {
 			if h, ok := client.DeviceInfo["hostname"].(string); ok {
@@ -332,6 +333,9 @@ func (h *Hub) getDeviceList() []map[string]interface{} {
 			if lbl, ok := client.DeviceInfo["label"].(string); ok {
 				label = lbl
 			}
+			if grp, ok := client.DeviceInfo["group_name"].(string); ok {
+				groupName = grp
+			}
 		}
 
 		device := map[string]interface{}{
@@ -347,7 +351,7 @@ func (h *Hub) getDeviceList() []map[string]interface{} {
 			"windows_username":  windowsUsername,
 			"wallpaper_url":     wallpaperURL,
 			"label":             label,
-			"group_name":        "",
+			"group_name":        groupName,
 			"created_at":        client.LastSeen.Format("2006-01-02T15:04:05Z"),
 			"updated_at":        client.LastSeen.Format("2006-01-02T15:04:05Z"),
 		}
@@ -400,8 +404,19 @@ func handleGetDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpdateDeviceGroup updates the group for a device
+
 func handleUpdateDeviceGroup(w http.ResponseWriter, r *http.Request) {
+	// CORS headers (set for all responses, including errors)
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	w.Header().Set("Content-Type", "application/json")
+
+	// Handle preflight
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 
 	vars := mux.Vars(r)
 	deviceID := vars["id"]
@@ -410,12 +425,14 @@ func handleUpdateDeviceGroup(w http.ResponseWriter, r *http.Request) {
 		GroupName string `json:"group_name"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error": "Invalid request body"}`))
 		return
 	}
 
-	// Update in hub's in-memory store
+	// Update in hub's in-memory store and send to agent
 	hub.mutex.Lock()
 	if client, exists := hub.clients[deviceID]; exists {
 		if client.DeviceInfo == nil {
@@ -423,6 +440,18 @@ func handleUpdateDeviceGroup(w http.ResponseWriter, r *http.Request) {
 		}
 		client.DeviceInfo["group_name"] = req.GroupName
 		log.Printf("📁 Updated group for device %s: %s", deviceID, req.GroupName)
+
+		// Send update_group command to agent to store locally
+		cmd := map[string]interface{}{
+			"type":       "command",
+			"command":    "update_group",
+			"request_id": fmt.Sprintf("group_%d", time.Now().UnixNano()),
+			"data": map[string]interface{}{
+				"group_name": req.GroupName,
+			},
+		}
+		client.Conn.WriteJSON(cmd)
+		log.Printf("📤 Sent update_group command to agent %s", deviceID)
 	}
 	hub.mutex.Unlock()
 
@@ -471,9 +500,10 @@ func main() {
 	// Enable CORS
 	handler := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:3000", "*"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Content-Type", "Authorization", "*"},
 		AllowCredentials: true,
+		MaxAge:           3600,
 	}).Handler(router)
 
 	// Start server

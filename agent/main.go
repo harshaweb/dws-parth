@@ -55,11 +55,13 @@ type DeviceInfo struct {
 	Username  string `json:"username"`
 	IPAddress string `json:"ip_address"`
 	Wallpaper string `json:"wallpaper_url"`
-	Label     string `json:"label"` // Device label stored locally
+	Label     string `json:"label"`      // Device label stored locally
+	GroupName string `json:"group_name"` // Device group stored locally
 }
 
 type LocalConfig struct {
-	Label string `json:"label"`
+	Label     string `json:"label"`
+	GroupName string `json:"group_name"`
 }
 
 type Agent struct {
@@ -92,8 +94,8 @@ func NewAgent() *Agent {
 func (a *Agent) loadLocalConfig() {
 	data, err := ioutil.ReadFile(a.configPath)
 	if err != nil {
-		// If file doesn't exist, create with empty label
-		a.localConfig = LocalConfig{Label: ""}
+		// If file doesn't exist, create with empty values
+		a.localConfig = LocalConfig{Label: "", GroupName: ""}
 		a.saveLocalConfig()
 		return
 	}
@@ -101,9 +103,9 @@ func (a *Agent) loadLocalConfig() {
 	err = json.Unmarshal(data, &a.localConfig)
 	if err != nil {
 		log.Printf("⚠️  Failed to parse config file: %v", err)
-		a.localConfig = LocalConfig{Label: ""}
+		a.localConfig = LocalConfig{Label: "", GroupName: ""}
 	}
-	log.Printf("📋 Loaded local config: label=%s", a.localConfig.Label)
+	log.Printf("📋 Loaded local config: label=%s, group=%s", a.localConfig.Label, a.localConfig.GroupName)
 }
 
 func (a *Agent) saveLocalConfig() error {
@@ -117,12 +119,17 @@ func (a *Agent) saveLocalConfig() error {
 		return err
 	}
 
-	log.Printf("💾 Saved local config: label=%s", a.localConfig.Label)
+	log.Printf("💾 Saved local config: label=%s, group=%s", a.localConfig.Label, a.localConfig.GroupName)
 	return nil
 }
 
 func (a *Agent) updateLabel(newLabel string) error {
 	a.localConfig.Label = newLabel
+	return a.saveLocalConfig()
+}
+
+func (a *Agent) updateGroupName(newGroup string) error {
+	a.localConfig.GroupName = newGroup
 	return a.saveLocalConfig()
 }
 
@@ -151,7 +158,8 @@ func (a *Agent) RegisterDevice() error {
 		Username:  username,
 		IPAddress: getLocalIP(),
 		Wallpaper: getWallpaperPath(),
-		Label:     a.localConfig.Label, // Include local label
+		Label:     a.localConfig.Label,     // Include local label
+		GroupName: a.localConfig.GroupName, // Include local group
 	}
 
 	msg := ClientMessage{
@@ -262,14 +270,22 @@ func (a *Agent) ListenForCommands() {
 			continue
 		}
 
-		log.Printf("📩 Received command: %s", msgType)
+		// If type is "command", extract the actual command from "command" field
+		cmdType := msgType
+		if msgType == "command" {
+			if command, ok := msg["command"].(string); ok {
+				cmdType = command
+			}
+		}
+
+		log.Printf("📩 Received command: %s", cmdType)
 
 		// Process command and send response
-		response := a.HandleCommand(msgType, msg["data"])
+		response := a.HandleCommand(cmdType, msg["data"])
 		if response != nil {
 			// Map command types to response types expected by frontend
-			responseType := msgType + "_response"
-			switch msgType {
+			responseType := cmdType + "_response"
+			switch cmdType {
 			case "file_operation":
 				responseType = "file_response"
 			case "service_operation":
@@ -328,6 +344,31 @@ func (a *Agent) HandleCommand(cmdType string, data interface{}) interface{} {
 		return map[string]interface{}{
 			"success": false,
 			"message": "Invalid label data",
+		}
+
+	case "update_group":
+		// Handle group update command
+		var groupData map[string]interface{}
+		json.Unmarshal(dataJSON, &groupData)
+		if groupName, ok := groupData["group_name"].(string); ok {
+			err := a.updateGroupName(groupName)
+			if err != nil {
+				return map[string]interface{}{
+					"success": false,
+					"message": fmt.Sprintf("Failed to update group: %v", err),
+				}
+			}
+			log.Printf("✅ Group updated successfully: %s", groupName)
+
+			return map[string]interface{}{
+				"success":    true,
+				"message":    "Group updated successfully",
+				"group_name": groupName,
+			}
+		}
+		return map[string]interface{}{
+			"success": false,
+			"message": "Invalid group data",
 		}
 
 	case "file_operation":
