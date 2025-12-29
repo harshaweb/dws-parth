@@ -96,6 +96,21 @@ func handleAgentWebSocket(w http.ResponseWriter, r *http.Request) {
 				hub.updateLastSeen(deviceID)
 			}
 
+		case "update_label_response":
+			// Label was updated on agent, update device info and broadcast
+			if deviceID != "" {
+				var responseData map[string]interface{}
+				json.Unmarshal(msg.Data, &responseData)
+				if label, ok := responseData["label"].(string); ok {
+					hub.updateDeviceLabel(deviceID, label)
+					// Broadcast updated device list
+					hub.broadcastToFrontends(map[string]interface{}{
+						"type": "device_list",
+						"data": hub.getDeviceList(),
+					})
+				}
+			}
+
 		default:
 			// Forward responses to frontend
 			if deviceID != "" {
@@ -247,6 +262,19 @@ func (h *Hub) updateLastSeen(deviceID string) {
 	}
 }
 
+func (h *Hub) updateDeviceLabel(deviceID string, label string) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	if client, exists := h.clients[deviceID]; exists {
+		if client.DeviceInfo == nil {
+			client.DeviceInfo = make(map[string]interface{})
+		}
+		client.DeviceInfo["label"] = label
+		log.Printf("📝 Updated label for device %s: %s", deviceID, label)
+	}
+}
+
 func (h *Hub) sendToClient(deviceID string, msg Message) error {
 	h.mutex.RLock()
 	client, exists := h.clients[deviceID]
@@ -283,6 +311,7 @@ func (h *Hub) getDeviceList() []map[string]interface{} {
 		osVersion := ""
 		windowsUsername := ""
 		wallpaperURL := "https://images.unsplash.com/photo-1614624532983-4ce03382d63d?w=800&q=80"
+		label := ""
 
 		if client.DeviceInfo != nil {
 			if h, ok := client.DeviceInfo["hostname"].(string); ok {
@@ -300,6 +329,9 @@ func (h *Hub) getDeviceList() []map[string]interface{} {
 			if wallpaper, ok := client.DeviceInfo["wallpaper_url"].(string); ok && wallpaper != "" {
 				wallpaperURL = wallpaper
 			}
+			if lbl, ok := client.DeviceInfo["label"].(string); ok {
+				label = lbl
+			}
 		}
 
 		device := map[string]interface{}{
@@ -314,6 +346,8 @@ func (h *Hub) getDeviceList() []map[string]interface{} {
 			"last_seen":         client.LastSeen.Format("2006-01-02T15:04:05Z"),
 			"windows_username":  windowsUsername,
 			"wallpaper_url":     wallpaperURL,
+			"label":             label,
+			"group_name":        "",
 			"created_at":        client.LastSeen.Format("2006-01-02T15:04:05Z"),
 			"updated_at":        client.LastSeen.Format("2006-01-02T15:04:05Z"),
 		}
@@ -365,6 +399,45 @@ func handleGetDevice(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// handleUpdateDeviceGroup updates the group for a device
+func handleUpdateDeviceGroup(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	vars := mux.Vars(r)
+	deviceID := vars["id"]
+
+	var req struct {
+		GroupName string `json:"group_name"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Update in hub's in-memory store
+	hub.mutex.Lock()
+	if client, exists := hub.clients[deviceID]; exists {
+		if client.DeviceInfo == nil {
+			client.DeviceInfo = make(map[string]interface{})
+		}
+		client.DeviceInfo["group_name"] = req.GroupName
+		log.Printf("📁 Updated group for device %s: %s", deviceID, req.GroupName)
+	}
+	hub.mutex.Unlock()
+
+	// Broadcast updated device list to all frontends
+	hub.broadcastToFrontends(map[string]interface{}{
+		"type": "device_list",
+		"data": hub.getDeviceList(),
+	})
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Device group updated successfully",
+	})
+}
+
 func main() {
 	log.Println("🚀 Remote Admin Server (Central Hub) Starting...")
 	log.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -378,9 +451,18 @@ func main() {
 	// Setup router
 	router := mux.NewRouter()
 
-	// REST API endpoints
-	router.HandleFunc("/api/devices", handleGetDevices).Methods("GET")
-	router.HandleFunc("/api/devices/{id}", handleGetDevice).Methods("GET")
+	// Device endpoints - use hub's live device list
+	router.HandleFunc("/api/devices", handleGetDevices).Methods("GET", "OPTIONS")
+	router.HandleFunc("/api/devices/{id}", handleGetDevice).Methods("GET", "OPTIONS")
+	router.HandleFunc("/api/devices/{id}/group", handleUpdateDeviceGroup).Methods("PATCH", "OPTIONS")
+
+	// Group management endpoints (from api.go)
+	router.HandleFunc("/api/groups", HandleAPIGetGroups).Methods("GET", "OPTIONS")
+	router.HandleFunc("/api/groups", HandleAPICreateGroup).Methods("POST", "OPTIONS")
+	router.HandleFunc("/api/groups/{id}", HandleAPIGetGroup).Methods("GET", "OPTIONS")
+	router.HandleFunc("/api/groups/{id}", HandleAPIUpdateGroup).Methods("PUT", "OPTIONS")
+	router.HandleFunc("/api/groups/{id}", HandleAPIDeleteGroup).Methods("DELETE", "OPTIONS")
+	router.HandleFunc("/api/groups/{name}/devices", HandleAPIGetGroupDevices).Methods("GET", "OPTIONS")
 
 	// WebSocket endpoints
 	router.HandleFunc("/ws/client", handleAgentWebSocket)      // For Windows agents

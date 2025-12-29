@@ -14,6 +14,7 @@ var (
 	mongoClient        *mongo.Client
 	devicesCollection  *mongo.Collection
 	sessionsCollection *mongo.Collection
+	groupsCollection   *mongo.Collection
 )
 
 const mongoURI = "mongodb+srv://dwsparth:7388139606@cluster0.d0wsypq.mongodb.net/?appName=Cluster0"
@@ -38,6 +39,7 @@ func InitDatabase() error {
 	db := client.Database("device_management")
 	devicesCollection = db.Collection("devices")
 	sessionsCollection = db.Collection("sessions")
+	groupsCollection = db.Collection("groups")
 
 	log.Println("✅ Connected to MongoDB successfully")
 	return nil

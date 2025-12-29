@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
@@ -18,8 +20,8 @@ import (
 )
 
 const (
-	SERVER_URL = "wss://dws-parth.daucu.com/ws/client" // Central server URL (Production)
-	// For local testing, use: "ws://localhost:8080/ws/client"
+	SERVER_URL = "ws://localhost:8080/ws/client" // Local testing
+	// For production, use: "wss://dws-parth.daucu.com/ws/client"
 )
 
 type ClientMessage struct {
@@ -53,19 +55,75 @@ type DeviceInfo struct {
 	Username  string `json:"username"`
 	IPAddress string `json:"ip_address"`
 	Wallpaper string `json:"wallpaper_url"`
+	Label     string `json:"label"` // Device label stored locally
+}
+
+type LocalConfig struct {
+	Label string `json:"label"`
 }
 
 type Agent struct {
-	conn     *websocket.Conn
-	deviceID string
-	writeMux sync.Mutex // Protect concurrent writes to WebSocket
+	conn        *websocket.Conn
+	deviceID    string
+	writeMux    sync.Mutex // Protect concurrent writes to WebSocket
+	configPath  string
+	localConfig LocalConfig
 }
 
 func NewAgent() *Agent {
 	hostname, _ := os.Hostname()
-	return &Agent{
-		deviceID: hostname, // Use hostname as device ID
+
+	// Get config directory path
+	configDir, _ := os.UserConfigDir()
+	agentConfigDir := filepath.Join(configDir, "dws-agent")
+	os.MkdirAll(agentConfigDir, 0755)
+
+	agent := &Agent{
+		deviceID:   hostname, // Use hostname as device ID
+		configPath: filepath.Join(agentConfigDir, "config.json"),
 	}
+
+	// Load local config (label)
+	agent.loadLocalConfig()
+
+	return agent
+}
+
+func (a *Agent) loadLocalConfig() {
+	data, err := ioutil.ReadFile(a.configPath)
+	if err != nil {
+		// If file doesn't exist, create with empty label
+		a.localConfig = LocalConfig{Label: ""}
+		a.saveLocalConfig()
+		return
+	}
+
+	err = json.Unmarshal(data, &a.localConfig)
+	if err != nil {
+		log.Printf("⚠️  Failed to parse config file: %v", err)
+		a.localConfig = LocalConfig{Label: ""}
+	}
+	log.Printf("📋 Loaded local config: label=%s", a.localConfig.Label)
+}
+
+func (a *Agent) saveLocalConfig() error {
+	data, err := json.MarshalIndent(a.localConfig, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	err = ioutil.WriteFile(a.configPath, data, 0644)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("💾 Saved local config: label=%s", a.localConfig.Label)
+	return nil
+}
+
+func (a *Agent) updateLabel(newLabel string) error {
+	a.localConfig.Label = newLabel
+	return a.saveLocalConfig()
 }
 
 func (a *Agent) Connect() error {
@@ -93,6 +151,7 @@ func (a *Agent) RegisterDevice() error {
 		Username:  username,
 		IPAddress: getLocalIP(),
 		Wallpaper: getWallpaperPath(),
+		Label:     a.localConfig.Label, // Include local label
 	}
 
 	msg := ClientMessage{
@@ -248,6 +307,29 @@ func (a *Agent) HandleCommand(cmdType string, data interface{}) interface{} {
 	}
 
 	switch cmdType {
+	case "update_label":
+		// Handle label update command
+		var labelData map[string]interface{}
+		json.Unmarshal(dataJSON, &labelData)
+		if label, ok := labelData["label"].(string); ok {
+			err := a.updateLabel(label)
+			if err != nil {
+				return map[string]interface{}{
+					"success": false,
+					"message": fmt.Sprintf("Failed to update label: %v", err),
+				}
+			}
+			return map[string]interface{}{
+				"success": true,
+				"message": "Label updated successfully",
+				"label":   label,
+			}
+		}
+		return map[string]interface{}{
+			"success": false,
+			"message": "Invalid label data",
+		}
+
 	case "file_operation":
 		response, err := HandleFileOperationJSON(dataJSON)
 		if err != nil {

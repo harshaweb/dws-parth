@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Bell, X, Monitor, Wifi, WifiOff, AlertTriangle, CheckCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { wsService } from "@/lib/websocket-service"
 
 interface Notification {
   id: string
@@ -67,63 +68,44 @@ export function NotificationCenter() {
   }
 
   useEffect(() => {
-    const demoNotifications = [
-      {
-        type: "device-online" as const,
-        title: "Device Connected",
-        message: "Production Server 01 is now online",
-        deviceName: "Production Server 01",
-      },
-      {
-        type: "device-offline" as const,
-        title: "Device Disconnected",
-        message: "Database Server has gone offline",
-        deviceName: "Database Server",
-      },
-      {
-        type: "alert" as const,
-        title: "High CPU Usage",
-        message: "Web Server 01 CPU usage exceeded 85%",
-        deviceName: "Web Server 01",
-      },
-      {
-        type: "success" as const,
-        title: "Service Restored",
-        message: "IIS Admin Service has been restarted successfully",
-        deviceName: "Production Server 01",
-      },
-      {
-        type: "device-online" as const,
-        title: "Device Reconnected",
-        message: "Development Workstation is back online",
-        deviceName: "Development Workstation",
-      },
-      {
-        type: "alert" as const,
-        title: "Disk Space Warning",
-        message: "Database Server disk usage at 89%",
-        deviceName: "Database Server",
-      },
-    ]
-
-    let index = 0
-    const interval = setInterval(() => {
-      const demo = demoNotifications[index % demoNotifications.length]
-      const newNotification: Notification = {
-        id: Date.now().toString(),
-        ...demo,
-        timestamp: new Date(),
-        read: false,
+    // Listen for real-time device connection/disconnection events
+    const handleMessage = (message: any) => {
+      if (message.type === 'device_connected') {
+        const newNotification: Notification = {
+          id: Date.now().toString(),
+          type: "device-online",
+          title: "Device Connected",
+          message: `${message.data?.name || 'A device'} is now online`,
+          deviceName: message.data?.name,
+          timestamp: new Date(),
+          read: false,
+        }
+        setNotifications((prev) => [newNotification, ...prev])
+        setUnreadCount((prev) => prev + 1)
+        showToast(newNotification)
+        playNotificationSound()
+      } else if (message.type === 'device_disconnected') {
+        const newNotification: Notification = {
+          id: Date.now().toString(),
+          type: "device-offline",
+          title: "Device Disconnected",
+          message: `${message.device_name || 'A device'} has gone offline`,
+          deviceName: message.device_name,
+          timestamp: new Date(),
+          read: false,
+        }
+        setNotifications((prev) => [newNotification, ...prev])
+        setUnreadCount((prev) => prev + 1)
+        showToast(newNotification)
+        playNotificationSound()
       }
+    }
 
-      setNotifications((prev) => [newNotification, ...prev])
-      setUnreadCount((prev) => prev + 1)
-      showToast(newNotification)
-      playNotificationSound()
-      index++
-    }, 5000)
+    const cleanup = wsService.addMessageHandler(handleMessage)
 
-    return () => clearInterval(interval)
+    return () => {
+      cleanup()
+    }
   }, [])
 
   const markAsRead = (id: string) => {

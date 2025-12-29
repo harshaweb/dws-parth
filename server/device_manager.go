@@ -48,6 +48,7 @@ func RegisterDevice(name string) (*Device, error) {
 			LastSeen:         time.Now(),
 			WindowsUsername:  username,
 			WallpaperURL:     "/windows-11-gradient-purple.jpg",
+			GroupName:        "",
 			CreatedAt:        time.Now(),
 			UpdatedAt:        time.Now(),
 		}
@@ -155,6 +156,25 @@ func DeleteDevice(deviceID string) error {
 	}
 
 	_, err = devicesCollection.DeleteOne(ctx, bson.M{"_id": objID})
+	return err
+}
+
+// UpdateDeviceGroup updates the group name of a device
+func UpdateDeviceGroup(deviceID primitive.ObjectID, groupName string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := devicesCollection.UpdateOne(
+		ctx,
+		bson.M{"_id": deviceID},
+		bson.M{
+			"$set": bson.M{
+				"group_name": groupName,
+				"updated_at": time.Now(),
+			},
+		},
+	)
+
 	return err
 }
 

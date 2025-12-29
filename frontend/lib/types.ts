@@ -10,6 +10,8 @@ export interface Device {
   last_seen: string
   windows_username: string
   wallpaper_url: string
+  label: string
+  group_name: string
   created_at: string
   updated_at: string
 }
@@ -54,6 +56,15 @@ export interface Profile {
   email: string
   full_name: string | null
   role: string
+  created_at: string
+  updated_at: string
+}
+
+export interface Group {
+  id: string
+  user_id: string
+  name: string
+  description: string
   created_at: string
   updated_at: string
 }

@@ -1,10 +1,12 @@
 "use client"
 
 import type React from "react"
+import { useState } from "react"
 
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,21 +26,31 @@ import {
   Archive,
   Edit,
   Power,
+  Tag,
+  Check,
+  X,
+  FolderInput,
 } from "lucide-react"
 import { useRouter } from "next/navigation"
-import type { Device } from "@/lib/types"
+import type { Device, Group } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { useToast } from "@/hooks/use-toast"
+import { wsService } from "@/lib/websocket-service"
 
 interface DeviceGridProps {
   devices: Device[]
+  groups?: Group[]
   onDelete?: (id: string) => void
   onArchive?: (id: string) => void
+  onLabelUpdate?: (id: string, label: string) => void
+  onMoveToGroup?: (deviceId: string, groupName: string) => void
 }
 
-export function DeviceGrid({ devices, onDelete, onArchive }: DeviceGridProps) {
+export function DeviceGrid({ devices, groups = [], onDelete, onArchive, onLabelUpdate, onMoveToGroup }: DeviceGridProps) {
   const router = useRouter()
   const { toast } = useToast()
+  const [editingLabel, setEditingLabel] = useState<string | null>(null)
+  const [labelValue, setLabelValue] = useState("")
 
   const handleDelete = (e: React.MouseEvent, deviceId: string, deviceName: string) => {
     e.stopPropagation()
@@ -74,6 +86,51 @@ export function DeviceGrid({ devices, onDelete, onArchive }: DeviceGridProps) {
       title: "Restart Command Sent",
       description: `Sending restart command to ${deviceName}...`,
     })
+  }
+
+  const startEditingLabel = (e: React.MouseEvent, deviceId: string, currentLabel: string) => {
+    e.stopPropagation()
+    setEditingLabel(deviceId)
+    setLabelValue(currentLabel || "")
+  }
+
+  const cancelEditingLabel = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setEditingLabel(null)
+    setLabelValue("")
+  }
+
+  const saveLabel = async (e: React.MouseEvent, deviceId: string, deviceName: string) => {
+    e.stopPropagation()
+    try {
+      // Send label update via WebSocket to the agent
+      const sent = wsService.send({
+        type: "update_label",
+        device_id: deviceId,
+        data: {
+          label: labelValue
+        }
+      })
+      
+      if (!sent) {
+        throw new Error("WebSocket not connected")
+      }
+      
+      // Optimistically update UI
+      onLabelUpdate?.(deviceId, labelValue)
+      
+      toast({
+        title: "Label Updated",
+        description: `Label for ${deviceName} has been updated.`,
+      })
+      setEditingLabel(null)
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to update label. Make sure the device is connected.",
+        variant: "destructive",
+      })
+    }
   }
 
   if (devices.length === 0) {
@@ -174,6 +231,39 @@ export function DeviceGrid({ devices, onDelete, onArchive }: DeviceGridProps) {
                     Shutdown
                   </DropdownMenuItem>
                   <DropdownMenuSeparator className="bg-slate-800" />
+                  {groups.length > 0 && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <DropdownMenuItem
+                          className="text-slate-300 focus:bg-slate-800 focus:text-white"
+                          onClick={(e) => e.stopPropagation()}
+                          onSelect={(e) => e.preventDefault()}
+                        >
+                          <FolderInput className="mr-2 h-4 w-4" />
+                          Move to Group
+                        </DropdownMenuItem>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent side="right" className="border-slate-800 bg-slate-900">
+                        {groups.map((group) => (
+                          <DropdownMenuItem
+                            key={group.id}
+                            className="text-slate-300 focus:bg-slate-800 focus:text-white"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onMoveToGroup?.(device.id, group.name)
+                              toast({
+                                title: "Device Moved",
+                                description: `${device.name} moved to ${group.name}`,
+                              })
+                            }}
+                          >
+                            {group.name}
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
+                  <DropdownMenuSeparator className="bg-slate-800" />
                   <DropdownMenuItem
                     className="text-yellow-400 focus:bg-yellow-950/20 focus:text-yellow-400"
                     onClick={(e) => handleArchive(e, device.id, device.name)}
@@ -203,6 +293,66 @@ export function DeviceGrid({ devices, onDelete, onArchive }: DeviceGridProps) {
                 <p className="truncate text-sm text-slate-400">{device.hostname}</p>
               </div>
             </div>
+
+            {/* Label Section */}
+            <div className="mb-3 rounded-lg bg-slate-800/50 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-1 text-xs text-slate-500">
+                  <Tag className="h-3 w-3" />
+                  <span>Label</span>
+                </div>
+                {editingLabel !== device.id && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-5 px-2 text-xs text-blue-400 hover:text-blue-300 hover:bg-slate-800"
+                    onClick={(e) => startEditingLabel(e, device.id, device.label)}
+                  >
+                    <Edit className="h-3 w-3" />
+                  </Button>
+                )}
+              </div>
+              {editingLabel === device.id ? (
+                <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                  <Input
+                    value={labelValue}
+                    onChange={(e) => setLabelValue(e.target.value)}
+                    className="h-7 text-xs bg-slate-900 border-slate-700"
+                    placeholder="Enter label..."
+                    autoFocus
+                  />
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 w-7 p-0 text-green-400 hover:text-green-300 hover:bg-slate-800"
+                    onClick={(e) => saveLabel(e, device.id, device.name)}
+                  >
+                    <Check className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 w-7 p-0 text-red-400 hover:text-red-300 hover:bg-slate-800"
+                    onClick={(e) => cancelEditingLabel(e)}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-sm font-medium text-slate-200 truncate">
+                  {device.label || <span className="text-slate-500 italic">No label</span>}
+                </p>
+              )}
+            </div>
+
+            {/* Group Badge */}
+            {device.group_name && (
+              <div className="mb-3">
+                <Badge variant="outline" className="border-purple-500/30 bg-purple-500/10 text-purple-400">
+                  {device.group_name}
+                </Badge>
+              </div>
+            )}
 
             <div className="mb-3 flex items-center gap-2 rounded-lg bg-slate-800/50 p-3">
               <User className="h-4 w-4 text-blue-400" />

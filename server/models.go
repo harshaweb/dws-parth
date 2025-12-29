@@ -18,6 +18,8 @@ type Device struct {
 	LastSeen         time.Time          `bson:"last_seen" json:"last_seen"`
 	WindowsUsername  string             `bson:"windows_username" json:"windows_username"`
 	WallpaperURL     string             `bson:"wallpaper_url" json:"wallpaper_url"`
+	Label            string             `bson:"-" json:"label"`               // Label stored locally on agent, not in MongoDB
+	GroupName        string             `bson:"group_name" json:"group_name"` // Group name for organization
 	CreatedAt        time.Time          `bson:"created_at" json:"created_at"`
 	UpdatedAt        time.Time          `bson:"updated_at" json:"updated_at"`
 }
@@ -37,4 +39,13 @@ type SystemMetrics struct {
 	MemoryUsage float64            `bson:"memory_usage" json:"memory_usage"`
 	DiskUsage   float64            `bson:"disk_usage" json:"disk_usage"`
 	Timestamp   time.Time          `bson:"timestamp" json:"timestamp"`
+}
+
+type Group struct {
+	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	UserID      string             `bson:"user_id" json:"user_id"`
+	Name        string             `bson:"name" json:"name"`
+	Description string             `bson:"description" json:"description"`
+	CreatedAt   time.Time          `bson:"created_at" json:"created_at"`
+	UpdatedAt   time.Time          `bson:"updated_at" json:"updated_at"`
 }
