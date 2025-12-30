@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 )
 
 type Response struct {
@@ -88,6 +89,14 @@ func HandleShellCommand(data json.RawMessage) Response {
 		} else {
 			cmd = exec.Command("sh", "-c", req.Command)
 			session.Type = "sh"
+		}
+	}
+
+	// Hide the console window on Windows
+	if runtime.GOOS == "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			HideWindow:    true,
+			CreationFlags: 0x08000000, // CREATE_NO_WINDOW
 		}
 	}
 
