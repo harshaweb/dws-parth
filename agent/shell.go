@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 type Response struct {
@@ -75,12 +78,36 @@ func HandleShellCommand(data json.RawMessage) Response {
 	var cmd *exec.Cmd
 	var output bytes.Buffer
 	var stderr bytes.Buffer
+	var tempFile string
+
+	// For long commands (>8000 chars) or multi-line commands, use a temp script file
+	useTempFile := len(req.Command) > 8000 || strings.Contains(req.Command, "\n")
 
 	switch session.Type {
 	case "cmd":
-		cmd = exec.Command("cmd.exe", "/c", req.Command)
+		if useTempFile {
+			// Write command to temp batch file
+			tempFile = filepath.Join(os.TempDir(), fmt.Sprintf("dws_cmd_%d.bat", time.Now().UnixNano()))
+			err := os.WriteFile(tempFile, []byte("@echo off\r\n"+req.Command), 0644)
+			if err != nil {
+				return Response{Success: false, Message: "Failed to create temp script: " + err.Error()}
+			}
+			cmd = exec.Command("cmd.exe", "/c", tempFile)
+		} else {
+			cmd = exec.Command("cmd.exe", "/c", req.Command)
+		}
 	case "powershell":
-		cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", req.Command)
+		if useTempFile {
+			// Write command to temp PowerShell script
+			tempFile = filepath.Join(os.TempDir(), fmt.Sprintf("dws_ps_%d.ps1", time.Now().UnixNano()))
+			err := os.WriteFile(tempFile, []byte(req.Command), 0644)
+			if err != nil {
+				return Response{Success: false, Message: "Failed to create temp script: " + err.Error()}
+			}
+			cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", tempFile)
+		} else {
+			cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", req.Command)
+		}
 	default:
 		// Default to PowerShell on Windows
 		if runtime.GOOS == "windows" {
@@ -90,6 +117,11 @@ func HandleShellCommand(data json.RawMessage) Response {
 			cmd = exec.Command("sh", "-c", req.Command)
 			session.Type = "sh"
 		}
+	}
+
+	// Clean up temp file after execution
+	if tempFile != "" {
+		defer os.Remove(tempFile)
 	}
 
 	// Hide the console window on Windows

@@ -327,6 +327,8 @@ func (a *Agent) ListenForCommands() {
 				responseType = "service_response"
 			case "software_operation":
 				responseType = "software_response"
+			case "task_manager":
+				responseType = "task_manager_response"
 			case "shell_command":
 				responseType = "shell_response"
 			case "screen_capture":
@@ -516,6 +518,14 @@ func (a *Agent) HandleCommand(cmdType string, data interface{}) interface{} {
 		var result interface{}
 		json.Unmarshal(response, &result)
 		return result
+
+	case "task_manager":
+		response := HandleTaskManagerAction(dataJSON)
+		return map[string]interface{}{
+			"success":   response.Success,
+			"message":   response.Message,
+			"processes": response.Processes,
+		}
 
 	case "screen_capture":
 		// Parse screen capture options
