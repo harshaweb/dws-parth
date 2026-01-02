@@ -38,6 +38,7 @@ export function ProfessionalTerminal({ deviceId, userId }: ProfessionalTerminalP
   const terminalRef = useRef<HTMLDivElement>(null)
   const terminalInstance = useRef<Terminal | null>(null)
   const fitAddon = useRef<FitAddon | null>(null)
+  const currentDirRef = useRef<string>("")
   const { toast } = useToast()
 
   // Initialize Terminal
@@ -118,6 +119,11 @@ export function ProfessionalTerminal({ deviceId, userId }: ProfessionalTerminalP
       term.dispose()
     }
   }, [])
+
+  // Sync currentDir to ref
+  useEffect(() => {
+    currentDirRef.current = currentDir
+  }, [currentDir])
 
   // WebSocket connection
   useEffect(() => {
@@ -218,7 +224,7 @@ export function ProfessionalTerminal({ deviceId, userId }: ProfessionalTerminalP
 
   const writePrompt = () => {
     if (!terminalInstance.current) return
-    const dir = currentDir || "~"
+    const dir = currentDirRef.current || "~"
     const prompt = shellType === "powershell" 
       ? `\x1b[32mPS\x1b[0m \x1b[36m${dir}\x1b[0m\x1b[33m>\x1b[0m `
       : `\x1b[36m${dir}\x1b[0m\x1b[33m>\x1b[0m `
@@ -351,7 +357,7 @@ export function ProfessionalTerminal({ deviceId, userId }: ProfessionalTerminalP
       isFullScreen ? 'fixed inset-0 z-50 rounded-none' : 
       isMaximized ? 'fixed inset-4 z-50 shadow-2xl' : ''
     }`}>
-      <CardHeader className="border-b border-slate-800/50 bg-slate-900/80">
+      <CardHeader className="border-b border-slate-800/50 bg-slate-900/80 py-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <TerminalIcon className="h-5 w-5 text-blue-400" />
@@ -418,8 +424,8 @@ export function ProfessionalTerminal({ deviceId, userId }: ProfessionalTerminalP
       </CardHeader>
       <CardContent className="p-0">
         <Tabs value={shellType} onValueChange={(value) => handleShellSwitch(value as "powershell" | "cmd")} className="w-full">
-          <div className="border-b border-slate-800/50 bg-slate-900/60 px-4">
-            <TabsList className="bg-transparent h-10 p-0 border-0">
+          <div className="border-b border-slate-800/50 bg-slate-900/60 px-4 h-[8vh]">
+            <TabsList className="bg-transparent h-full p-0 border-0">
               <TabsTrigger
                 value="powershell"
                 className="data-[state=active]:bg-transparent data-[state=active]:text-blue-400 data-[state=active]:border-b-2 data-[state=active]:border-blue-400 text-slate-400 rounded-none h-10 px-4"
@@ -441,13 +447,13 @@ export function ProfessionalTerminal({ deviceId, userId }: ProfessionalTerminalP
             <div 
               ref={terminalRef}
               className={`rounded-lg overflow-hidden border border-slate-800/50 ${
-                isFullScreen ? 'h-[calc(100vh-180px)]' : 
-                isMaximized ? 'h-[calc(100vh-260px)]' : 
-                'h-150'
+                isFullScreen ? 'h-[calc(100vh-28vh)]' : 
+                isMaximized ? 'h-[calc(100vh-28vh)]' : 
+                'h-[60vh]'
               }`}
               style={{ padding: '8px' }}
             />
-            <div className="mt-3 text-xs text-slate-500 flex items-center justify-between border-t border-slate-800/50 pt-3">
+            <div className="mt-3 text-xs text-slate-500 flex items-center justify-between border-t border-slate-800/50 pt-3 h-[8vh]">
               <div className="flex items-center gap-4">
                 <kbd className="px-2 py-1 bg-slate-800/50 rounded border border-slate-700">Ctrl+C</kbd>
                 <span>Cancel</span>
