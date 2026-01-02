@@ -268,7 +268,6 @@ export function DeviceGrid({ devices, groups = [], onDelete, onArchive, onLabelU
                             className="text-slate-300 focus:bg-slate-800 focus:text-white"
                             onClick={(e) => {
                               e.stopPropagation()
-                              console.log('Clicking group:', group.name, 'for device:', device.id)
                               onMoveToGroup?.(device.id, group.name)
                             }}
                           >

@@ -189,8 +189,6 @@ export default function DashboardPage() {
 
   const handleMoveToGroup = async (deviceId: string, groupName: string) => {
     try {
-      console.log('Moving device:', deviceId, 'to group:', groupName)
-      
       // Optimistically update local state
       setDevices((prevDevices) =>
         prevDevices.map((device) =>
@@ -199,8 +197,7 @@ export default function DashboardPage() {
       )
       
       // Save to server
-      const result = await updateDeviceGroup(deviceId, groupName)
-      console.log('Update result:', result)
+      await updateDeviceGroup(deviceId, groupName)
       
       toast({
         title: "Device Moved",
