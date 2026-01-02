@@ -81,32 +81,38 @@ func HandleShellCommand(data json.RawMessage) Response {
 	var tempFile string
 
 	// For long commands (>8000 chars) or multi-line commands, use a temp script file
-	useTempFile := len(req.Command) > 8000 || strings.Contains(req.Command, "\n")
+	useTempFile := len(req.Command) > 8000 || strings.Contains(req.Command, "\n") || strings.Contains(req.Command, "\r")
 
 	switch session.Type {
 	case "cmd":
 		if useTempFile {
-			// Write command to temp batch file
+			// Write command to temp batch file with proper encoding
 			tempFile = filepath.Join(os.TempDir(), fmt.Sprintf("dws_cmd_%d.bat", time.Now().UnixNano()))
-			err := os.WriteFile(tempFile, []byte("@echo off\r\n"+req.Command), 0644)
+			// Add @echo off and CHCP 65001 for UTF-8 support
+			batchContent := "@echo off\r\nchcp 65001 >nul 2>&1\r\n" + strings.ReplaceAll(req.Command, "\n", "\r\n")
+			err := os.WriteFile(tempFile, []byte(batchContent), 0644)
 			if err != nil {
 				return Response{Success: false, Message: "Failed to create temp script: " + err.Error()}
 			}
 			cmd = exec.Command("cmd.exe", "/c", tempFile)
 		} else {
+			// For single-line commands, use /c with proper quoting
 			cmd = exec.Command("cmd.exe", "/c", req.Command)
 		}
 	case "powershell":
 		if useTempFile {
-			// Write command to temp PowerShell script
+			// Write command to temp PowerShell script with UTF-8 BOM
 			tempFile = filepath.Join(os.TempDir(), fmt.Sprintf("dws_ps_%d.ps1", time.Now().UnixNano()))
-			err := os.WriteFile(tempFile, []byte(req.Command), 0644)
+			// Add UTF-8 BOM for proper encoding
+			scriptContent := []byte{0xEF, 0xBB, 0xBF} // UTF-8 BOM
+			scriptContent = append(scriptContent, []byte(req.Command)...)
+			err := os.WriteFile(tempFile, scriptContent, 0644)
 			if err != nil {
 				return Response{Success: false, Message: "Failed to create temp script: " + err.Error()}
 			}
 			cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", tempFile)
 		} else {
-			cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", req.Command)
+			cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", req.Command)
 		}
 	default:
 		// Default to PowerShell on Windows
