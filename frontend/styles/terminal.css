@@ -1,0 +1,15 @@
+/* Import xterm.js styles */
+@import '@xterm/xterm/css/xterm.css';
+
+/* Additional terminal customizations */
+.xterm {
+  padding: 8px;
+}
+
+.xterm-viewport {
+  overflow-y: auto;
+}
+
+.xterm .xterm-screen {
+  overflow-x: hidden;
+}

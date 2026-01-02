@@ -29,7 +29,7 @@ import type { Device } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { FileManager } from "@/components/file-manager"
 import { ScreenViewer } from "@/components/screen-viewer"
-import { XtermTerminal } from "@/components/xterm-terminal"
+import { ProfessionalTerminal } from "@/components/professional-terminal"
 import { ServicesManager } from "@/components/services-manager"
 import { SoftwareManager } from "@/components/software-manager"
 import { TaskManager } from "@/components/task-manager"
@@ -416,7 +416,7 @@ export function DeviceDetailLayout({ device, userId }: DeviceDetailLayoutProps) 
 
             {activeTab === "files" && <FileManager deviceId={device.id} userId={userId} />}
             {activeTab === "screen" && <ScreenViewer deviceId={device.id} deviceName={device.name} />}
-            {activeTab === "shell" && <XtermTerminal deviceId={device.id} userId={userId} />}
+            {activeTab === "shell" && <ProfessionalTerminal deviceId={device.id} userId={userId} />}
             {activeTab === "services" && <ServicesManager deviceId={device.id} userId={userId} />}
             {activeTab === "software" && <SoftwareManager deviceId={device.id} userId={userId} />}
             {activeTab === "tasks" && <TaskManager deviceId={device.id} userId={userId} />}

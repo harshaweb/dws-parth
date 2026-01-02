@@ -1,11 +1,10 @@
 "use client"
 
 import type React from "react"
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Terminal, Trash2, Download, Maximize2, Minimize2, Expand, Send } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
@@ -21,6 +20,7 @@ interface ShellSession {
   command: string
   output: string
   executed_at: string
+  working_dir: string
 }
 
 export function ShellTerminal({ deviceId, userId }: ShellTerminalProps) {
@@ -31,7 +31,12 @@ export function ShellTerminal({ deviceId, userId }: ShellTerminalProps) {
   const [isMaximized, setIsMaximized] = useState(false)
   const [isFullScreen, setIsFullScreen] = useState(false)
   const [ws, setWs] = useState<WebSocket | null>(null)
+  const [currentDir, setCurrentDir] = useState("")
+  const [commandHistory, setCommandHistory] = useState<string[]>([])
+  const [historyIndex, setHistoryIndex] = useState(-1)
   const terminalRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const pendingCommandRef = useRef<string>("")
   const { toast } = useToast()
 
   useEffect(() => {
@@ -50,23 +55,40 @@ export function ShellTerminal({ deviceId, userId }: ShellTerminalProps) {
         console.log("💻 Shell output received:", message.data)
         // Server returns response with success flag and data
         if (message.data && message.data.success && message.data.data) {
+          const responseData = message.data.data
           const newSession: ShellSession = {
             id: Date.now().toString(),
-            command: command,
-            output: message.data.data.output || "",
+            command: pendingCommandRef.current,
+            output: responseData.output || "",
             executed_at: new Date().toISOString(),
+            working_dir: responseData.working_dir || currentDir,
           }
           setHistory((prev) => [...prev, newSession])
+          
+          // Update current directory from response
+          if (responseData.working_dir) {
+            setCurrentDir(responseData.working_dir)
+          }
         } else {
           const newSession: ShellSession = {
             id: Date.now().toString(),
-            command: command,
+            command: pendingCommandRef.current,
             output: message.data?.message || "Command execution failed",
             executed_at: new Date().toISOString(),
+            working_dir: currentDir,
           }
           setHistory((prev) => [...prev, newSession])
         }
         setIsExecuting(false)
+        pendingCommandRef.current = ""
+      } else if (message.type === "switch_shell_response") {
+        // Handle shell switch response
+        if (message.data && message.data.success && message.data.data) {
+          const responseData = message.data.data
+          if (responseData.working_dir) {
+            setCurrentDir(responseData.working_dir)
+          }
+        }
       } else if (message.type === "error") {
         // Only show error if there's a message
         if (message.data?.message) {
@@ -103,17 +125,39 @@ export function ShellTerminal({ deviceId, userId }: ShellTerminalProps) {
     }
   }, [history])
 
+  // Focus input when clicking on terminal
+  const handleTerminalClick = useCallback(() => {
+    inputRef.current?.focus()
+  }, [])
+
   const executeCommand = async () => {
     if (!command.trim() || !ws || ws.readyState !== WebSocket.OPEN) return
 
+    const trimmedCommand = command.trim()
+    
+    // Handle clear/cls command locally
+    if (trimmedCommand.toLowerCase() === "cls" || trimmedCommand.toLowerCase() === "clear") {
+      setHistory([])
+      setCommand("")
+      return
+    }
+
     setIsExecuting(true)
+    pendingCommandRef.current = trimmedCommand
+    
+    // Add to command history for up/down navigation
+    setCommandHistory(prev => {
+      const newHistory = [...prev.filter(c => c !== trimmedCommand), trimmedCommand]
+      return newHistory.slice(-50) // Keep last 50 commands
+    })
+    setHistoryIndex(-1)
 
     // Send command via WebSocket
     ws.send(JSON.stringify({
       type: "shell_command",
       data: {
         session_id: deviceId,
-        command: command,
+        command: trimmedCommand,
         shell_type: shellType
       }
     }))
@@ -125,6 +169,9 @@ export function ShellTerminal({ deviceId, userId }: ShellTerminalProps) {
     if (newShellType === shellType) return
     
     setShellType(newShellType)
+    // Clear history when switching shells for a fresh start
+    setHistory([])
+    setCurrentDir("")
     
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
@@ -142,89 +189,19 @@ export function ShellTerminal({ deviceId, userId }: ShellTerminalProps) {
     })
   }
 
-  const simulateCommandOutput = (cmd: string, shell: "powershell" | "cmd"): string => {
-    const cmdLower = cmd.toLowerCase().trim()
-
-    if (cmdLower === "dir" || cmdLower === "ls" || cmdLower.startsWith("get-childitem")) {
-      return `Directory: C:\\Users\\Admin
-
-Mode                 LastWriteTime         Length Name
-----                 -------------         ------ ----
-d-----        12/26/2024   3:14 PM                Documents
-d-----        12/26/2024   2:45 PM                Downloads
-d-----        12/20/2024   8:32 AM                Pictures
--a----        12/25/2024   4:21 PM          15248 report.txt
--a----        12/24/2024   1:15 PM        2048576 data.db`
+  // Generate prompt string based on shell type and current directory
+  const getPrompt = (dir?: string) => {
+    const displayDir = dir || currentDir || "~"
+    if (shellType === "powershell") {
+      return `PS ${displayDir}>`
+    } else {
+      return `${displayDir}>`
     }
-
-    if (cmdLower.startsWith("get-service") || cmdLower === "services") {
-      return `Status   Name               DisplayName
-------   ----               -----------
-Running  BITS               Background Intelligent Transfer Ser...
-Running  Dhcp               DHCP Client
-Stopped  WSearch            Windows Search
-Running  Winmgmt            Windows Management Instrumentation`
-    }
-
-    if (cmdLower.startsWith("get-process") || cmdLower === "tasklist") {
-      return `Handles  NPM(K)    PM(K)      WS(K)     CPU(s)     Id  SI ProcessName
--------  ------    -----      -----     ------     --  -- -----------
-    845      45    25484      38256       2.14   4532   1 chrome
-    234      18     8924      15632       0.52   2348   1 explorer
-    512      32    18764      24896       1.28   3764   1 code`
-    }
-
-    if (cmdLower.startsWith("systeminfo") || cmdLower.startsWith("get-computerinfo")) {
-      return `Host Name:                 DESKTOP-PC01
-OS Name:                   Microsoft Windows 11 Pro
-OS Version:                10.0.22621 N/A Build 22621
-System Manufacturer:       Dell Inc.
-System Model:              OptiPlex 7090
-Processor:                 Intel(R) Core(TM) i7-11700 @ 2.50GHz
-Total Physical Memory:     32,768 MB`
-    }
-
-    if (cmdLower === "ipconfig" || cmdLower.startsWith("get-netipaddress")) {
-      return `Windows IP Configuration
-
-Ethernet adapter Ethernet:
-   Connection-specific DNS Suffix  . : 
-   IPv4 Address. . . . . . . . . . . : 192.168.1.100
-   Subnet Mask . . . . . . . . . . . : 255.255.255.0
-   Default Gateway . . . . . . . . . : 192.168.1.1`
-    }
-
-    if (cmdLower === "hostname") {
-      return "DESKTOP-PC01"
-    }
-
-    if (cmdLower === "whoami") {
-      return "desktop-pc01\\administrator"
-    }
-
-    if (cmdLower === "help" || cmdLower === "get-command") {
-      return shell === "powershell"
-        ? `Common PowerShell commands:
-Get-ChildItem    - List directory contents
-Get-Service      - List Windows services
-Get-Process      - List running processes
-Get-ComputerInfo - Display system information
-Get-NetIPAddress - Display network configuration`
-        : `Common CMD commands:
-dir              - List directory contents
-tasklist         - List running processes
-systeminfo       - Display system information
-ipconfig         - Display network configuration
-hostname         - Display computer name`
-    }
-
-    return shell === "powershell"
-      ? `CommandNotFoundException: The term '${cmd}' is not recognized as the name of a cmdlet, function, script file, or operable program.`
-      : `'${cmd}' is not recognized as an internal or external command, operable program or batch file.`
   }
 
   const clearHistory = () => {
     setHistory([])
+    setCurrentDir("")
     toast({
       title: "Success",
       description: "Terminal history cleared",
@@ -244,7 +221,8 @@ hostname         - Display computer name`
   const exportHistory = () => {
     const historyText = history
       .map((session) => {
-        return `[${new Date(session.executed_at).toLocaleString()}] ${shellType.toUpperCase()}> ${session.command}\n${session.output}\n\n`
+        const prompt = shellType === "powershell" ? `PS ${session.working_dir}>` : `${session.working_dir}>`
+        return `[${new Date(session.executed_at).toLocaleString()}] ${prompt} ${session.command}\n${session.output}\n\n`
       })
       .join("")
 
@@ -259,9 +237,38 @@ hostname         - Display computer name`
     URL.revokeObjectURL(url)
   }
 
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && !isExecuting) {
       executeCommand()
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault()
+      if (commandHistory.length > 0) {
+        const newIndex = historyIndex < commandHistory.length - 1 ? historyIndex + 1 : historyIndex
+        setHistoryIndex(newIndex)
+        setCommand(commandHistory[commandHistory.length - 1 - newIndex] || "")
+      }
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault()
+      if (historyIndex > 0) {
+        const newIndex = historyIndex - 1
+        setHistoryIndex(newIndex)
+        setCommand(commandHistory[commandHistory.length - 1 - newIndex] || "")
+      } else if (historyIndex === 0) {
+        setHistoryIndex(-1)
+        setCommand("")
+      }
+    } else if (e.key === "Tab") {
+      e.preventDefault()
+      // Tab completion could be added here in the future
+    } else if (e.key === "c" && e.ctrlKey) {
+      // Ctrl+C to cancel current input
+      if (!isExecuting) {
+        setCommand("")
+      }
+    } else if (e.key === "l" && e.ctrlKey) {
+      // Ctrl+L to clear screen
+      e.preventDefault()
+      setHistory([])
     }
   }
 
@@ -337,39 +344,49 @@ hostname         - Display computer name`
           <TabsContent value={shellType} className="space-y-4">
             <div
               ref={terminalRef}
-              className={`font-mono text-sm bg-slate-950 border border-slate-800 rounded-lg p-4 overflow-y-auto ${isFullScreen ? 'h-[calc(100vh-220px)]' : isMaximized ? 'h-[calc(100vh-280px)]' : 'h-96'}`}
+              onClick={handleTerminalClick}
+              className={`font-mono text-sm bg-slate-950 border border-slate-800 rounded-lg p-4 overflow-y-auto cursor-text ${isFullScreen ? 'h-[calc(100vh-220px)]' : isMaximized ? 'h-[calc(100vh-280px)]' : 'h-96'}`}
             >
               {history.length === 0 ? (
                 <div className="text-slate-500">
-                  <p className="mb-2">{shellType === "powershell" ? "Windows PowerShell" : "Microsoft Windows CMD"}</p>
+                  <p className="mb-2">{shellType === "powershell" ? "Windows PowerShell" : "Microsoft Windows [Version 10.0]"}</p>
                   <p className="mb-4">Copyright (c) Microsoft Corporation. All rights reserved.</p>
-                  <p className="mb-2">Type 'help' to see available commands.</p>
-                  <div className="flex items-center gap-2 text-green-400">
-                    <span>PS C:\Users\Admin&gt;</span>
+                  <p className="mb-2 text-slate-600">Type commands below. Use ↑↓ for history, Ctrl+L to clear.</p>
+                  <div className="flex items-center gap-1 text-green-400">
+                    <span>{getPrompt()}</span>
                     <span className="animate-pulse">_</span>
                   </div>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {history.map((session) => (
+                <div className="space-y-2">
+                  {history.map((session, index) => (
                     <div key={session.id} className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          variant="outline"
-                          className="border-slate-700 bg-slate-800 text-slate-400 font-mono text-xs"
-                        >
-                          {new Date(session.executed_at).toLocaleTimeString()}
-                        </Badge>
-                        <span className="text-green-400 font-semibold">
-                          {shellType === "powershell" ? "PS" : "C:\\Users\\Admin"}&gt;
+                      <div className="flex items-start gap-1 flex-wrap">
+                        <span className="text-green-400 font-semibold whitespace-nowrap">
+                          {getPrompt(session.working_dir)}
                         </span>
-                        <span className="text-blue-400">{session.command}</span>
+                        <span className="text-yellow-300">{session.command}</span>
                       </div>
-                      <pre className="text-slate-300 whitespace-pre-wrap pl-4 text-xs leading-relaxed">
-                        {session.output}
-                      </pre>
+                      {session.output && (
+                        <pre className="text-slate-300 whitespace-pre-wrap text-xs leading-relaxed ml-0">
+                          {session.output}
+                        </pre>
+                      )}
                     </div>
                   ))}
+                  {/* Current prompt line */}
+                  {!isExecuting && (
+                    <div className="flex items-center gap-1 text-green-400">
+                      <span>{getPrompt()}</span>
+                      <span className="animate-pulse">_</span>
+                    </div>
+                  )}
+                  {isExecuting && (
+                    <div className="flex items-center gap-2 text-slate-400">
+                      <span className="animate-spin">⠋</span>
+                      <span>Executing...</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -398,17 +415,20 @@ hostname         - Display computer name`
 
               {/* Command Input */}
               <div className="flex items-center gap-2">
-                <div className="flex-1 flex items-center gap-2 bg-slate-950 border border-slate-700 rounded-lg p-3 focus-within:border-blue-500 transition-colors">
+                <div className="flex-1 flex items-center gap-1 bg-slate-950 border border-slate-700 rounded-lg p-3 focus-within:border-blue-500 transition-colors">
                   <span className="font-mono text-sm text-green-400 font-semibold whitespace-nowrap">
-                    {shellType === "powershell" ? "PS" : "C:\\Users\\Admin"}&gt;
+                    {getPrompt()}
                   </span>
                   <Input
+                    ref={inputRef}
                     value={command}
                     onChange={(e) => setCommand(e.target.value)}
-                    onKeyPress={handleKeyPress}
-                    placeholder="Type your command here and press Enter..."
+                    onKeyDown={handleKeyDown}
+                    placeholder="Type command..."
                     disabled={isExecuting}
-                    className="border-0 bg-transparent text-blue-400 font-mono text-sm focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-slate-600"
+                    className="border-0 bg-transparent text-yellow-300 font-mono text-sm focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-slate-600 h-6 p-0"
+                    autoComplete="off"
+                    spellCheck={false}
                   />
                 </div>
                 <Button
@@ -425,18 +445,9 @@ hostname         - Display computer name`
 
             <div className="text-xs text-slate-500 space-y-1">
               <p>
-                Try commands like: <code className="text-blue-400">dir</code>,{" "}
-                <code className="text-blue-400">systeminfo</code>, <code className="text-blue-400">ipconfig</code>,{" "}
-                {shellType === "powershell" ? (
-                  <>
-                    <code className="text-blue-400">Get-Service</code>,{" "}
-                    <code className="text-blue-400">Get-Process</code>
-                  </>
-                ) : (
-                  <>
-                    <code className="text-blue-400">tasklist</code>, <code className="text-blue-400">hostname</code>
-                  </>
-                )}
+                <kbd className="px-1 py-0.5 bg-slate-800 rounded text-slate-400">↑</kbd>/<kbd className="px-1 py-0.5 bg-slate-800 rounded text-slate-400">↓</kbd> Navigate history • 
+                <kbd className="px-1 py-0.5 bg-slate-800 rounded text-slate-400 ml-2">Ctrl+L</kbd> Clear • 
+                <kbd className="px-1 py-0.5 bg-slate-800 rounded text-slate-400 ml-2">cls</kbd> or <kbd className="px-1 py-0.5 bg-slate-800 rounded text-slate-400">clear</kbd> Clear screen
               </p>
             </div>
           </TabsContent>

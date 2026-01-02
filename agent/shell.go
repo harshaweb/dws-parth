@@ -34,9 +34,15 @@ func InitShellSession(sessionID, shellType string) {
 	sessionMutex.Lock()
 	defer sessionMutex.Unlock()
 
+	// Get user's home directory as default
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = "C:\\"
+	}
+
 	shellSessions[sessionID] = &ShellSession{
 		Type:       shellType,
-		WorkingDir: "C:\\",
+		WorkingDir: homeDir,
 	}
 }
 
@@ -44,6 +50,72 @@ func GetShellSession(sessionID string) *ShellSession {
 	sessionMutex.RLock()
 	defer sessionMutex.RUnlock()
 	return shellSessions[sessionID]
+}
+
+// isCdCommand checks if the command is a directory change command
+func isCdCommand(cmd string) bool {
+	cmdLower := strings.ToLower(strings.TrimSpace(cmd))
+
+	// Handle various cd command patterns
+	if strings.HasPrefix(cmdLower, "cd ") || cmdLower == "cd" {
+		return true
+	}
+	if strings.HasPrefix(cmdLower, "cd/") || strings.HasPrefix(cmdLower, "cd\\") {
+		return true
+	}
+	if strings.HasPrefix(cmdLower, "chdir ") || cmdLower == "chdir" {
+		return true
+	}
+	// PowerShell aliases
+	if strings.HasPrefix(cmdLower, "set-location ") || cmdLower == "set-location" {
+		return true
+	}
+	if strings.HasPrefix(cmdLower, "sl ") || cmdLower == "sl" {
+		return true
+	}
+	if strings.HasPrefix(cmdLower, "pushd ") {
+		return true
+	}
+	if cmdLower == "popd" {
+		return true
+	}
+
+	return false
+}
+
+// extractTargetDir extracts the target directory from a cd command
+func extractTargetDir(cmd string) string {
+	cmdLower := strings.ToLower(strings.TrimSpace(cmd))
+	cmdTrim := strings.TrimSpace(cmd)
+
+	var targetDir string
+
+	// Handle various patterns
+	if strings.HasPrefix(cmdLower, "cd /d ") {
+		targetDir = strings.TrimSpace(cmdTrim[6:])
+	} else if strings.HasPrefix(cmdLower, "cd ") {
+		targetDir = strings.TrimSpace(cmdTrim[3:])
+	} else if strings.HasPrefix(cmdLower, "chdir ") {
+		targetDir = strings.TrimSpace(cmdTrim[6:])
+	} else if strings.HasPrefix(cmdLower, "set-location ") {
+		targetDir = strings.TrimSpace(cmdTrim[13:])
+	} else if strings.HasPrefix(cmdLower, "sl ") {
+		targetDir = strings.TrimSpace(cmdTrim[3:])
+	} else if strings.HasPrefix(cmdLower, "pushd ") {
+		targetDir = strings.TrimSpace(cmdTrim[6:])
+	}
+
+	// Remove surrounding quotes
+	targetDir = strings.Trim(targetDir, "\"'")
+
+	// Handle PowerShell -Path parameter
+	if strings.Contains(strings.ToLower(targetDir), "-path ") {
+		idx := strings.Index(strings.ToLower(targetDir), "-path ")
+		targetDir = strings.TrimSpace(targetDir[idx+6:])
+		targetDir = strings.Trim(targetDir, "\"'")
+	}
+
+	return targetDir
 }
 
 func HandleShellCommand(data json.RawMessage) Response {
@@ -74,6 +146,10 @@ func HandleShellCommand(data json.RawMessage) Response {
 	session.mu.Lock()
 	defer session.mu.Unlock()
 
+	// Check if this is a cd command that we need to handle specially
+	cmdTrimmed := strings.TrimSpace(req.Command)
+	isChangeDir := isCdCommand(cmdTrimmed)
+
 	// Execute command
 	var cmd *exec.Cmd
 	var output bytes.Buffer
@@ -83,37 +159,72 @@ func HandleShellCommand(data json.RawMessage) Response {
 	// For long commands (>8000 chars) or multi-line commands, use a temp script file
 	useTempFile := len(req.Command) > 8000 || strings.Contains(req.Command, "\n") || strings.Contains(req.Command, "\r")
 
+	// Build the actual command to execute
+	// For cd commands, we need to execute the cd AND then get the new working directory
+	var actualCommand string
+
 	switch session.Type {
 	case "cmd":
+		if isChangeDir {
+			// For CMD: execute cd and get new directory
+			targetDir := extractTargetDir(cmdTrimmed)
+			if targetDir == "" {
+				// Just "cd" - show current directory
+				actualCommand = "cd"
+			} else if targetDir == ".." {
+				actualCommand = "cd /d .. && cd"
+			} else if targetDir == "\\" || targetDir == "/" {
+				actualCommand = "cd /d \\ && cd"
+			} else if len(targetDir) >= 2 && targetDir[1] == ':' {
+				// Absolute path with drive letter
+				actualCommand = fmt.Sprintf("cd /d \"%s\" && cd", targetDir)
+			} else {
+				// Relative path
+				actualCommand = fmt.Sprintf("cd /d \"%s\" && cd", targetDir)
+			}
+		} else {
+			actualCommand = req.Command
+		}
+
 		if useTempFile {
-			// Write command to temp batch file with proper encoding
 			tempFile = filepath.Join(os.TempDir(), fmt.Sprintf("dws_cmd_%d.bat", time.Now().UnixNano()))
-			// Add @echo off and CHCP 65001 for UTF-8 support
-			batchContent := "@echo off\r\nchcp 65001 >nul 2>&1\r\n" + strings.ReplaceAll(req.Command, "\n", "\r\n")
+			batchContent := "@echo off\r\nchcp 65001 >nul 2>&1\r\n" + strings.ReplaceAll(actualCommand, "\n", "\r\n")
 			err := os.WriteFile(tempFile, []byte(batchContent), 0644)
 			if err != nil {
 				return Response{Success: false, Message: "Failed to create temp script: " + err.Error()}
 			}
 			cmd = exec.Command("cmd.exe", "/c", tempFile)
 		} else {
-			// For single-line commands, use /c with proper quoting
-			cmd = exec.Command("cmd.exe", "/c", req.Command)
+			cmd = exec.Command("cmd.exe", "/c", actualCommand)
 		}
+
 	case "powershell":
+		if isChangeDir {
+			// For PowerShell: execute Set-Location and get new directory
+			targetDir := extractTargetDir(cmdTrimmed)
+			if targetDir == "" {
+				// Just "cd" - go to home directory
+				actualCommand = "Set-Location ~; (Get-Location).Path"
+			} else {
+				actualCommand = fmt.Sprintf("Set-Location -Path '%s'; (Get-Location).Path", strings.ReplaceAll(targetDir, "'", "''"))
+			}
+		} else {
+			actualCommand = req.Command
+		}
+
 		if useTempFile {
-			// Write command to temp PowerShell script with UTF-8 BOM
 			tempFile = filepath.Join(os.TempDir(), fmt.Sprintf("dws_ps_%d.ps1", time.Now().UnixNano()))
-			// Add UTF-8 BOM for proper encoding
-			scriptContent := []byte{0xEF, 0xBB, 0xBF} // UTF-8 BOM
-			scriptContent = append(scriptContent, []byte(req.Command)...)
+			scriptContent := []byte{0xEF, 0xBB, 0xBF}
+			scriptContent = append(scriptContent, []byte(actualCommand)...)
 			err := os.WriteFile(tempFile, scriptContent, 0644)
 			if err != nil {
 				return Response{Success: false, Message: "Failed to create temp script: " + err.Error()}
 			}
 			cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", tempFile)
 		} else {
-			cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", req.Command)
+			cmd = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", actualCommand)
 		}
+
 	default:
 		// Default to PowerShell on Windows
 		if runtime.GOOS == "windows" {
@@ -149,15 +260,16 @@ func HandleShellCommand(data json.RawMessage) Response {
 		result += "\n" + stderr.String()
 	}
 
-	// Update working directory if cd command was executed
-	if strings.HasPrefix(strings.TrimSpace(req.Command), "cd ") {
-		newDir := strings.TrimSpace(strings.TrimPrefix(req.Command, "cd "))
-		newDir = strings.Trim(newDir, "\"'")
-		if newDir != "" && err == nil {
-			// Verify the directory exists
-			testCmd := exec.Command("cmd.exe", "/c", "cd /d "+newDir+" && cd")
-			if testOutput, testErr := testCmd.Output(); testErr == nil {
-				session.WorkingDir = strings.TrimSpace(string(testOutput))
+	// Update working directory if cd command was executed successfully
+	if isChangeDir && err == nil {
+		newDir := strings.TrimSpace(result)
+		// The result contains the new path
+		if newDir != "" && len(newDir) < 500 {
+			// Verify it's a valid path
+			if _, statErr := os.Stat(newDir); statErr == nil {
+				session.WorkingDir = newDir
+				// For cd commands, show the new directory as output
+				result = newDir
 			}
 		}
 	}
@@ -172,7 +284,7 @@ func HandleShellCommand(data json.RawMessage) Response {
 		}
 	}
 
-	log.Printf("Shell command executed: %s [Type: %s, Exit: %d]", req.Command, session.Type, exitCode)
+	log.Printf("Shell command executed: %s [Type: %s, Exit: %d, CWD: %s]", req.Command, session.Type, exitCode, session.WorkingDir)
 
 	return Response{
 		Success: true,
