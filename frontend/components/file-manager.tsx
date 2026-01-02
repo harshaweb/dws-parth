@@ -65,7 +65,7 @@ interface FileItem {
 
 export function FileManager({ deviceId, userId }: FileManagerProps) {
   const [files, setFiles] = useState<FileItem[]>([])
-  const [currentPath, setCurrentPath] = useState("C:\\Users")
+  const [currentPath, setCurrentPath] = useState("C:\\")
   const [searchQuery, setSearchQuery] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
@@ -235,7 +235,7 @@ export function FileManager({ deviceId, userId }: FileManagerProps) {
   }
 
   const handleGoHome = () => {
-    handleOpenFolder('C:\\Users')
+    handleOpenFolder('C:\\')
   }
 
   const handleDeleteFile = (filePath: string) => {
