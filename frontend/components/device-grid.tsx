@@ -268,11 +268,8 @@ export function DeviceGrid({ devices, groups = [], onDelete, onArchive, onLabelU
                             className="text-slate-300 focus:bg-slate-800 focus:text-white"
                             onClick={(e) => {
                               e.stopPropagation()
+                              console.log('Clicking group:', group.name, 'for device:', device.id)
                               onMoveToGroup?.(device.id, group.name)
-                              toast({
-                                title: "Device Moved",
-                                description: `${device.name} moved to ${group.name}`,
-                              })
                             }}
                           >
                             {group.name}
@@ -377,17 +374,6 @@ export function DeviceGrid({ devices, groups = [], onDelete, onArchive, onLabelU
               <div className="min-w-0 flex-1">
                 <p className="text-xs text-slate-500">Windows User</p>
                 <p className="truncate text-xs font-medium text-slate-200">{device.windows_username}</p>
-              </div>
-            </div>
-
-            <div className="space-y-1 border-t border-slate-800 pt-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-500">IP Address</span>
-                <span className="font-medium text-slate-300">{device.ip_address}</span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-500">Last seen</span>
-                <span className="font-medium text-slate-300">{new Date(device.last_seen).toLocaleDateString()}</span>
               </div>
             </div>
           </CardContent>

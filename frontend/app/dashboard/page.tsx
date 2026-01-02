@@ -50,7 +50,7 @@ export default function DashboardPage() {
   const [newGroupDescription, setNewGroupDescription] = useState("")
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
-  const [viewMode, setViewMode] = useState<"grid" | "list">("list")
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid")
   const { toast } = useToast()
   const router = useRouter()
 
@@ -189,6 +189,8 @@ export default function DashboardPage() {
 
   const handleMoveToGroup = async (deviceId: string, groupName: string) => {
     try {
+      console.log('Moving device:', deviceId, 'to group:', groupName)
+      
       // Optimistically update local state
       setDevices((prevDevices) =>
         prevDevices.map((device) =>
@@ -197,7 +199,8 @@ export default function DashboardPage() {
       )
       
       // Save to server
-      await updateDeviceGroup(deviceId, groupName)
+      const result = await updateDeviceGroup(deviceId, groupName)
+      console.log('Update result:', result)
       
       toast({
         title: "Device Moved",
@@ -206,6 +209,7 @@ export default function DashboardPage() {
       
       loadGroups() // Refresh group counts
     } catch (error) {
+      console.error('Error moving device to group:', error)
       // Revert on error
       loadDevices()
       toast({
