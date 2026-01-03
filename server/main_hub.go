@@ -535,6 +535,20 @@ func handleUpdateDeviceGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Update in database first
+	if devicesCollection != nil {
+		if err := UpdateDeviceGroupByHostname(deviceID, req.GroupName); err != nil {
+			log.Printf("⚠️ Failed to update device group in database: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"error":   "Failed to update device group in database",
+			})
+			return
+		}
+		log.Printf("✅ Updated group in database for device %s: %s", deviceID, req.GroupName)
+	}
+
 	// Update in hub's in-memory store and send to agent
 	hub.mutex.Lock()
 	if client, exists := hub.clients[deviceID]; exists {
@@ -542,7 +556,7 @@ func handleUpdateDeviceGroup(w http.ResponseWriter, r *http.Request) {
 			client.DeviceInfo = make(map[string]interface{})
 		}
 		client.DeviceInfo["group_name"] = req.GroupName
-		log.Printf("📁 Updated group for device %s: %s", deviceID, req.GroupName)
+		log.Printf("📁 Updated group in memory for device %s: %s", deviceID, req.GroupName)
 
 		// Send update_group command to agent to store locally
 		cmd := map[string]interface{}{

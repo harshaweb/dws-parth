@@ -178,6 +178,33 @@ func UpdateDeviceGroup(deviceID primitive.ObjectID, groupName string) error {
 	return err
 }
 
+// UpdateDeviceGroupByHostname updates the group name of a device using hostname
+func UpdateDeviceGroupByHostname(hostname, groupName string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	result, err := devicesCollection.UpdateOne(
+		ctx,
+		bson.M{"hostname": hostname},
+		bson.M{
+			"$set": bson.M{
+				"group_name": groupName,
+				"updated_at": time.Now(),
+			},
+		},
+	)
+
+	if err != nil {
+		return err
+	}
+
+	if result.MatchedCount == 0 {
+		return fmt.Errorf("device not found: %s", hostname)
+	}
+
+	return nil
+}
+
 // RegisterDeviceByHostname registers or updates a device using hostname as identifier
 func RegisterDeviceByHostname(hostname, deviceID, ipAddress, osVersion, windowsUsername, wallpaperURL, label, groupName string) (*Device, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
